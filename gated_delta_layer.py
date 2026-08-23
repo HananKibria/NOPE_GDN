@@ -347,4 +347,116 @@ class GatedDeltaLayer(nn.Module):
                 delta.unsqueeze(-1) @ k_right
             
             return output, new_state
-            
+class BiGatedDeltaLayer(nn.Module):
+    """
+    Bidirectional Gated Delta Network layer — forward + backward branches.
+
+    Wraps two GatedDeltaLayer instances:
+      - fwd:  processes x in original sequence order
+      - bwd:  processes a reversed view of x (per flip_mode), then the
+              output is reverse-mapped to align with the forward branch
+    """
+    def __init__(self, hidden_size: int, num_heads: int,
+                head_dim: int, chunk_size: int = 64,
+                channel_wise_decay: bool = True,
+                allow_neg_eigval: bool = False,
+                flip_mode: str = 'temporal',
+                spatial_tokens: int = None,
+                decay_target_dt: float = None,
+                a_init_range: Tuple[float, float] = (1.0, 16.0)):
+        super().__init__()
+        if num_heads < 1 :
+            raise ValueError(f"num_heads must be >= 1, got {num_heads}")
+        if flip_mode not in ('temporal', 'spatial', 'flat'):
+            raise ValueError(
+                f"flip_mode must be one of 'temporal' | 'spatial' | 'flat'; "
+                f"got {flip_mode!r}"
+            )
+        if flip_mode in ('temporal', 'spatial') and spatial_tokens is None:
+            raise ValueError(
+                f"flip_mode={flip_mode!r} requires spatial_tokens (H'*W') "
+                f"so the (T, S) grid can be reconstructed for axis-specific "
+                f"flipping. Pass spatial_tokens from the backbone or use "
+                f"flip_mode='flat'."
+            )
+        self.hidden_size = hidden_size
+        self.num_heads_per_dir = num_heads
+        self.head_dim = head_dim
+        self.flip_mode = flip_mode
+        self.spatial_tokens = spatial_tokens
+        
+        self.fwd = GatedDeltaLayer(
+            hidden_size, num_heads, head_dim, chunk_size,
+            channel_wise_decay=channel_wise_decay,
+            allow_neg_eigval=allow_neg_eigval,
+            decay_target_dt=decay_target_dt,
+            a_init_range=a_init_range,
+        )
+        self.bwd = GatedDeltaLayer(
+            hidden_size, num_heads, head_dim, chunk_size,
+            channel_wise_decay=channel_wise_decay,
+            allow_neg_eigval=allow_neg_eigval,
+            decay_target_dt=decay_target_dt,
+            a_init_range=a_init_range,
+        )
+        
+    def _flip_seq(self, x: torch.Tensor) -> torch.Tensor:
+        """Reverse the sequence according to self.flip_mode.
+        The encoder flattens the (T', H', W') grid in row-major order, so the
+        sequence layout is [t=0,s=0], [t=0,s=1], ..., [t=T-1,s=S-1] where
+        S = H'*W'. The three flip modes are:
+
+        'temporal': reverse only the T axis, preserving per-frame raster.
+                    Backward branch sees frames in reverse order, but the
+                    spatial scan within each frame matches the forward
+                    branch. This is the geometrically correct choice for
+                    "temporal bidirectionality" and is the default.
+
+        'spatial':  reverse only the S axis, preserving temporal order.
+                    Per-frame scan is reversed, frame order kept. Useful
+                    as an ablation control — if this matches uni-direction
+                    accuracy, the gain from bidi comes from temporal info.
+
+        'flat':     reverse the whole flattened sequence (joint 180°).
+                    Equivalent to the original Vim trick on a flat 1D seq;
+                    for 2D-structured data it reverses both axes together.
+                    Kept for ablation / reproducing Vim/VideoMamba exactly.
+        """
+        B, L, D = x.shape
+        if self.flip_mode == 'flat':
+            return x.flip(dims=[1])
+        S = self.spatial_tokens
+        T = L // S
+        if T * S != L:
+            raise RuntimeError(
+                f"BiGDN flip_mode={self.flip_mode!r}: sequence length L={L} "
+                f"is not divisible by spatial_tokens S={S}. Check that the "
+                f"backbone's grid matches what was passed to BiGatedDeltaLayer."
+            )
+        x_grid = x.view(B, T, S, D)
+        if self.flip_mode == 'temporal':
+            x_grid = x_grid.flip(dims=[1])     # reverse T, keep S
+        else:  # 'spatial'
+            x_grid = x_grid.flip(dims=[2])     # reverse S, keep T
+        return x_grid.reshape(B, L, D)
+
+    def forward(self, x: torch.Tensor, state=None, use_parallel=None):
+        """
+        Args:
+            x:            (B, L, hidden_size) where L = T' * H' * W'.
+            state:        ignored in bidirectional mode (kept for interface
+                          compatibility with HybridBlock).
+            use_parallel: forwarded to both branches.
+
+        Returns:
+            output:    (B, L, hidden_size) — y_fwd + y_bwd_realigned
+            new_state: None (no recurrent-state semantics for bidi)
+        """
+        y_fwd, _ = self.fwd(x, state=None, use_parallel=use_parallel)
+
+        x_rev = self._flip_seq(x)
+        y_bwd, _ = self.bwd(x_rev, state=None, use_parallel=use_parallel)
+        y_bwd = self._flip_seq(y_bwd)
+        
+        # Merge: simple sum
+        return y_fwd + y_bwd, None

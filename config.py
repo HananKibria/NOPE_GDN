@@ -146,4 +146,3 @@ def get_Config(variant: str="nope_gdn", size: str ="small") -> FullConfig:
     
     return cfg
 
-print("Configuration module loaded successfully.")
