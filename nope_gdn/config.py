@@ -12,7 +12,7 @@ class DataConfig:
     pin_memory: bool = True
 
     # Video sampling
-    num_frames: int = 64
+    num_frames: int = 32
     img_size: int = 224
     tubelet_size: Tuple[int, int, int] = (2, 16, 16)
 
@@ -34,7 +34,7 @@ class ModelConfig:
     """Architecture configuration — shared across all variants."""
     in_channels: int = 3
     img_size: int = 224
-    num_frames: int = 64
+    num_frames: int = 32
     tubelet_size: Tuple[int, int, int] = (2, 16, 16)
 
     # Encoder (Stage 1)
