@@ -1,15 +1,12 @@
-from typing import Tuple, Optional, Dict
-from main import nn,torch,F
-from gated_delta_layer import GatedDeltaLayer, BiGatedDeltaLayer
-try:
-    from fla.ops.kda import chunk_kda
-    FLA_AVAILABLE = True
-    print("FLA chunk_kda kernel available — using fused Triton GDN")
-except ImportError:
-    FLA_AVAILABLE = False
-    print("FLA chunk_kda kernel not available — using Python-loop GDN(slower)")
-    print("To install FLA, run: pip install fla-core")
-    
+from typing import Tuple, Optional, Dict, List
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.utils.checkpoint
+
+from .gated_delta import GatedDeltaLayer, BiGatedDeltaLayer, FLA_AVAILABLE
+
 class TubeletEmbedding(nn.Module):
     
     def __init__(self, img_size: int =224, num_frames: int =16, 
@@ -46,7 +43,7 @@ class TubeletEmbedding(nn.Module):
             'total': self.num_patches
         }
             
-class NopeMultiheadAttention(nn.Module):
+class NoPEMultiheadAttention(nn.Module):
     """Scaled Dot Product multi-head attention with No positional encoding.
     Purely content based attention pattern.
     """
@@ -114,7 +111,7 @@ class DropPath(nn.Module):
     def extra_repr(self) -> str:
         return f'drop_prob={self.drop_prob:.3f}'
     
-class NoPEVITBlock(nn.Module):
+class NoPEViTBlock(nn.Module):
     """
     Pre-norm ViT block with optional spatial-only attention factorization.
 
@@ -133,7 +130,7 @@ class NoPEVITBlock(nn.Module):
         super().__init__()
         self.spatial_tokens = spatial_tokens
         self.norm1 = nn.LayerNorm(embed_dim, eps=1e-6)
-        self.attn = NopeMultiheadAttention(embed_dim, num_heads, dropout=dropout)
+        self.attn = NoPEMultiheadAttention(embed_dim, num_heads, dropout=dropout)
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         self.norm2 = nn.LayerNorm(embed_dim, eps=1e-6)
         mlp_hidden = int(embed_dim * mlp_ratio)
@@ -194,7 +191,7 @@ class NoPEVideoEncoder(nn.Module):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
         
         self.blocks= nn.ModuleList([
-            NoPEVITBlock(embed_dim, num_heads, mlp_ratio, dropout, 
+            NoPEViTBlock(embed_dim, num_heads, mlp_ratio, dropout, 
                          spatial_tokens=spatial_tokens, drop_path=dpr[i])
             for i in range(depth)
         ])
@@ -287,7 +284,7 @@ class HybridBlock(nn.Module):
                     decay_target_dt=decay_target_dt,
                     a_init_range=a_init_range)
         else:
-            self.layer = NopeMultiheadAttention(dim, num_heads, dropout)
+            self.layer = NoPEMultiheadAttention(dim, num_heads, dropout)
 
         self.norm2 = nn.LayerNorm(dim, eps=1e-6)
         h = int(dim * mlp_ratio)

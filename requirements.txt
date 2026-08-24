@@ -1,0 +1,12 @@
+torch>=2.1
+torchvision
+timm
+transformers
+av
+fla-core
+numpy
+matplotlib
+
+# Optional: Kinetics-400 GPU (NVDEC) video decoding — Linux + CUDA only.
+# The CPU PyAV backend works without it.
+# nvidia-dali-cuda12
