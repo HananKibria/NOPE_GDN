@@ -68,11 +68,11 @@ class RealLRU(nn.Module):
         self.num_heads = num_heads
         self.conv1d_temporal_width = conv1d_temporal_width
 
-        # Full Linears for the LRU/output paths (paper uses full Dense here)
+        # Full Linears for the LRU/output paths 
         self.linear_x = nn.Linear(width, lru_width)
         self.linear_y = nn.Linear(width, lru_width)
 
-        # Block-diagonal for the two RG-LRU gates (paper: BlockDiagonalLinear)
+        # Block-diagonal for the two RG-LRU gates 
         self.input_gate = BlockDiagonalLinear(width, lru_width, num_blocks=num_heads)
         self.a_gate     = BlockDiagonalLinear(width, lru_width, num_blocks=num_heads)
 

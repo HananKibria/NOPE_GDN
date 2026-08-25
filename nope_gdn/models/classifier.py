@@ -54,7 +54,6 @@ class NoPEGDNClassifier(nn.Module):
 
         # spatial_tokens kept for the temporal head and downstream inspection
         self.spatial_tokens = (img_size // tubelet_size[1]) * (img_size // tubelet_size[2])
-        # Paper pairing (Sec. III-C/D): -T (time-only scan) -> global mean-pool
         # head; -F (flat raster scan) -> temporal-attention head
         self.temporal_head = not gdn_temporal_only
         if self.temporal_head:

@@ -218,7 +218,7 @@ class RoPEVideoClassifier(nn.Module):
 
         grid = self.tubelet_embed.get_grid_dims()
 
-        # VideoRoPE operates per-head (matching original paper)
+        # VideoRoPE operates per-head 
         self.rope = VideoRoPE3D(
             head_dim=embed_dim // num_heads,
             num_heads=num_heads,
